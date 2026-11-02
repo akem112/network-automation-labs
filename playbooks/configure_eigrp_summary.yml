@@ -1,0 +1,36 @@
+---
+# configure_eigrp_summary.yml
+# Module 1: EIGRP route summarization (named mode, AS 100).
+#
+# R3 summarizes the loopbacks of R1, R2 and R3 (10.255.0.1 - 10.255.0.3) toward R4
+# as one route, 10.255.0.0/30. The summary is configured on the af-interface
+# that faces R4 (R3 Gi0/1), so only that neighbor sees the summary and the
+# specifics are suppressed on that link. R3 itself installs a Null0 discard
+# route for the summary (AD 5).
+#
+# Why /30: it covers .0-.3 exactly. A /29 would also cover .4-.7, which are
+# R4-R7's loopbacks and would be a black-hole risk.
+#
+# Usage (from ~/ansible-lab):
+#   ansible-playbook -i inventory_enarsi.ini configure_eigrp_summary.yml --check --diff
+#   ansible-playbook -i inventory_enarsi.ini configure_eigrp_summary.yml
+#
+# Verify:
+#   R3: show ip route 10.255.0.0 255.255.255.252     (D, via Null0, AD 5)
+#   R4: show ip route eigrp                          (10.255.0.0/30 only, no .1/.2/.3 /32s)
+#   R1: ping 10.255.0.4 source 10.255.0.1            (still works)
+# Remove: 'no summary-address 10.255.0.0 255.255.255.252' under the af-interface.
+
+- name: R3 - summarize the EIGRP loopbacks toward R4
+  hosts: er3
+  gather_facts: no
+  tasks:
+    - name: Summary-address on the R3-R4 interface
+      cisco.ios.ios_config:
+        parents:
+          - "router eigrp {{ eigrp_process_name }}"
+          - "address-family ipv4 unicast autonomous-system {{ eigrp_as }}"
+          - "af-interface GigabitEthernet0/1"
+        lines:
+          - "summary-address 10.255.0.0 255.255.255.252"
+        save_when: modified

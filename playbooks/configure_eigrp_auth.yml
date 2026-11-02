@@ -1,0 +1,50 @@
+---
+# Set the key first: export EIGRP_KEY='your-lab-key'
+# configure_eigrp_auth.yml
+# Build step 1: EIGRP named-mode authentication (MD5 + key chain)
+# on the links between R1, R2, R3 and R4.
+#
+# NOT applied to R1 Gi0/3 (the R1-R6 link, 10.10.20.0/30). R6 is not managed by
+# configure_eigrp.yml, so enabling auth there would drop that adjacency until
+# R6 is configured to match.
+#
+# Usage (from ~/ansible-lab):
+#   ansible-playbook -i inventory_enarsi.ini configure_eigrp_auth.yml --check --diff
+#   ansible-playbook -i inventory_enarsi.ini configure_eigrp_auth.yml
+#
+# Verify: show ip eigrp neighbors ; show ip eigrp interfaces detail
+# Remove: delete the key chain and "no authentication ..." under each af-interface.
+
+- name: Configure EIGRP authentication on R1-R4
+  hosts: eigrp_lab
+  gather_facts: no
+  vars:
+    keychain_name: EIGRP-KC
+    key_string: "{{ lookup('env', 'EIGRP_KEY') }}"
+    auth_interfaces:
+      er1: [GigabitEthernet0/1, GigabitEthernet0/2]
+      er2: [GigabitEthernet0/1, GigabitEthernet0/2]
+      er3: [GigabitEthernet0/1, GigabitEthernet0/2, GigabitEthernet0/3]
+      er4: [GigabitEthernet0/1]
+  tasks:
+    - name: Create key chain
+      cisco.ios.ios_config:
+        parents:
+          - "key chain {{ keychain_name }}"
+          - "key 1"
+        lines:
+          - "key-string {{ key_string }}"
+      when: inventory_hostname in auth_interfaces
+
+    - name: Enable MD5 authentication under each EIGRP af-interface
+      cisco.ios.ios_config:
+        parents:
+          - "router eigrp {{ eigrp_process_name }}"
+          - "address-family ipv4 unicast autonomous-system {{ eigrp_as }}"
+          - "af-interface {{ item }}"
+        lines:
+          - "authentication mode md5"
+          - "authentication key-chain {{ keychain_name }}"
+        save_when: modified
+      loop: "{{ auth_interfaces[inventory_hostname] | default([]) }}"
+      when: inventory_hostname in auth_interfaces

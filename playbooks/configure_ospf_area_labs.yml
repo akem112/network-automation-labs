@@ -1,0 +1,124 @@
+---
+# configure_ospf_area_labs.yml
+# Module 2: OSPF advanced - area types, virtual link and filtering, on R6 (ABR)
+# and R7 (area 1). One playbook, one switch:
+#
+#   ansible-playbook -i inventory_enarsi.ini configure_ospf_area_labs.yml -e lab=<name>
+#
+#   lab=baseline         area 1 stub on R6 and R7 (the normal lab state; default)
+#   lab=totally_stubby   R6: 'area 1 stub no-summary'  (R7 only gets a default route)
+#   lab=nssa             area 1 NSSA; R7 redistributes Loopback200 (10.77.7.0/24) as a
+#                        Type 7 LSA that R6 translates to Type 5
+#   lab=virtual_link     area 1 plain (a stub/NSSA area CANNOT be a transit area);
+#                        R7 gets area 2 (Loopback201 10.77.8.0/24) with no link to area 0,
+#                        fixed with 'area 1 virtual-link' between R6 and R7
+#   lab=filter_list      area 1 plain; R6 filters the R5 loopback out of area 1 with
+#                        'area 1 filter-list prefix ... in' (Type 3 filtering at the ABR)
+#   lab=distribute_list  area 1 plain; R7 blocks the R5 loopback from its routing table with
+#                        'distribute-list prefix ... in' (LSDB keeps the LSA)
+#
+# Every run first removes ALL lab commands (ignore_errors, one command per task so a
+# "not configured" message cannot stop the rest), then applies the chosen lab.
+# Virtual links use router IDs 10.255.0.6 (R6) and 10.255.0.7 (R7).
+# Everything is saved (save_when: modified).
+#
+# Verification per lab is listed in the chat message that came with this file.
+
+- name: Prepare R6 and R7 (loopbacks, prefix-lists, route-map)
+  hosts: er6,er7
+  gather_facts: no
+  tasks:
+    - name: Prefix-list that blocks the R5 loopback
+      cisco.ios.ios_config:
+        lines:
+          - "ip prefix-list BLOCK-R5-LO seq 5 deny 10.255.0.5/32"
+          - "ip prefix-list BLOCK-R5-LO seq 10 permit 0.0.0.0/0 le 32"
+        save_when: modified
+
+    - name: R7 extra loopbacks (not advertised in the baseline)
+      cisco.ios.ios_config:
+        parents: "interface {{ item.name }}"
+        lines:
+          - "ip address {{ item.ip }} 255.255.255.0"
+        save_when: modified
+      loop:
+        - { name: Loopback200, ip: 10.77.7.1 }
+        - { name: Loopback201, ip: 10.77.8.1 }
+      when: inventory_hostname == 'er7'
+
+    - name: R7 prefix-list and route-map for the NSSA redistribution
+      cisco.ios.ios_config:
+        lines:
+          - "ip prefix-list R7-LO200 seq 5 permit 10.77.7.0/24"
+        save_when: modified
+      when: inventory_hostname == 'er7'
+
+    - name: R7 route-map R7-CONN
+      cisco.ios.ios_config:
+        parents: "route-map R7-CONN permit 10"
+        lines:
+          - "match ip address prefix-list R7-LO200"
+        save_when: modified
+      when: inventory_hostname == 'er7'
+
+- name: Remove every lab command, then apply the chosen lab
+  hosts: er6,er7
+  gather_facts: no
+  vars:
+    lab_name: "{{ lab | default('baseline') }}"
+    reset_lines:
+      er6:
+        - "no area 1 virtual-link 10.255.0.7"
+        - "no area 1 filter-list prefix BLOCK-R5-LO in"
+        - "no area 1 nssa"
+        - "no area 1 stub no-summary"
+        - "no area 1 stub"
+      er7:
+        - "no area 1 virtual-link 10.255.0.6"
+        - "no distribute-list prefix BLOCK-R5-LO in"
+        - "no redistribute connected subnets route-map R7-CONN"
+        - "no network 10.77.8.0 0.0.0.255 area 2"
+        - "no area 1 nssa"
+        - "no area 1 stub"
+    labs:
+      baseline:
+        er6: ["area 1 stub"]
+        er7: ["area 1 stub"]
+      totally_stubby:
+        er6: ["area 1 stub no-summary"]
+        er7: ["area 1 stub"]
+      nssa:
+        er6: ["area 1 nssa"]
+        er7: ["area 1 nssa", "redistribute connected subnets route-map R7-CONN"]
+      virtual_link:
+        er6: ["area 1 virtual-link 10.255.0.7"]
+        er7: ["network 10.77.8.0 0.0.0.255 area 2", "area 1 virtual-link 10.255.0.6"]
+      filter_list:
+        er6: ["area 1 filter-list prefix BLOCK-R5-LO in"]
+        er7: []
+      distribute_list:
+        er6: []
+        er7: ["distribute-list prefix BLOCK-R5-LO in"]
+  tasks:
+    - name: Check the lab name
+      ansible.builtin.assert:
+        that: lab_name in labs
+        fail_msg: "lab must be one of: {{ labs.keys() | list | join(', ') }}"
+        quiet: true
+      run_once: true
+
+    - name: Remove all area 1 lab commands
+      cisco.ios.ios_config:
+        parents: "router ospf 1"
+        lines:
+          - "{{ item }}"
+      loop: "{{ reset_lines[inventory_hostname] }}"
+      ignore_errors: true
+
+    - name: "Apply lab {{ lab_name }}"
+      cisco.ios.ios_config:
+        parents: "router ospf 1"
+        lines:
+          - "{{ item }}"
+        save_when: modified
+      loop: "{{ labs[lab_name][inventory_hostname] }}"

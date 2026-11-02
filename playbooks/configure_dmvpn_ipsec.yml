@@ -1,0 +1,74 @@
+---
+# configure_dmvpn_ipsec.yml
+# Build step 6: IPsec protection for the DMVPN (R10 hub, R11 and R12 spokes).
+#
+#   (Set the key first: export DMVPN_PSK='your-lab-key'.)
+#   IKEv1 (ISAKMP) with a pre-shared key, wildcard peer address because the
+#   spokes build dynamic spoke-to-spoke tunnels to peers the hub never lists.
+#   AES-256 / SHA-256, ESP in TRANSPORT mode (GRE already adds the tunnel
+#   header, so transport saves 20 bytes and is the DMVPN best practice).
+#
+# All three routers are in ONE play so they change at about the same time;
+# the tunnel is down only for the few seconds between the first and last
+# router getting "tunnel protection".
+#
+# If a router rejects 'esp-sha256-hmac' or 'hash sha256' (older IOSv image),
+# change them to 'esp-sha-hmac' and 'hash sha' on all three.
+#
+# Usage (from ~/ansible-lab):
+#   ansible-playbook -i inventory_enarsi.ini configure_dmvpn_ipsec.yml --check --diff
+#   ansible-playbook -i inventory_enarsi.ini configure_dmvpn_ipsec.yml
+#
+# Verify: show crypto isakmp sa   (QM_IDLE)      show crypto ipsec sa  (encaps/decaps)
+#         show dmvpn detail       (crypto session)
+# Remove: 'no tunnel protection ipsec profile DMVPN-PROF' under Tunnel0.
+
+- name: DMVPN IPsec on R10, R11 and R12
+  hosts: er10,er11,er12
+  gather_facts: no
+  vars:
+    psk: "{{ lookup('env', 'DMVPN_PSK') }}"
+  tasks:
+    - name: IKE phase 1 policy
+      cisco.ios.ios_config:
+        parents: "crypto isakmp policy 10"
+        lines:
+          - "encryption aes 256"
+          - "hash sha256"
+          - "authentication pre-share"
+          - "group 14"
+          - "lifetime 86400"
+        save_when: modified
+
+    - name: Pre-shared key for any peer
+      cisco.ios.ios_config:
+        lines:
+          - "crypto isakmp key {{ psk }} address 0.0.0.0"
+        save_when: modified
+
+    - name: IPsec transform set
+      cisco.ios.ios_config:
+        lines:
+          - "crypto ipsec transform-set DMVPN-TS esp-aes 256 esp-sha256-hmac"
+        save_when: modified
+
+    - name: Transform set uses transport mode
+      cisco.ios.ios_config:
+        parents: "crypto ipsec transform-set DMVPN-TS esp-aes 256 esp-sha256-hmac"
+        lines:
+          - "mode transport"
+        save_when: modified
+
+    - name: IPsec profile
+      cisco.ios.ios_config:
+        parents: "crypto ipsec profile DMVPN-PROF"
+        lines:
+          - "set transform-set DMVPN-TS"
+        save_when: modified
+
+    - name: Protect Tunnel0
+      cisco.ios.ios_config:
+        parents: "interface Tunnel0"
+        lines:
+          - "tunnel protection ipsec profile DMVPN-PROF"
+        save_when: modified

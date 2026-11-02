@@ -1,0 +1,71 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="FortiGate lab" id="fg-lab">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="800" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="fw1" value="&lt;b&gt;FW1 (FortiGate-VM)&lt;/b&gt;&lt;br&gt;port1 mgmt | port2 WAN&lt;br&gt;port3 LAN | port4 DMZ" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;arcSize=12;fillColor=#f8cecc;strokeColor=#b85450;align=left;spacingLeft=40" vertex="1" parent="1">
+          <mxGeometry x="300" y="280" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="fw2" value="&lt;b&gt;FW2 (FortiGate-VM)&lt;/b&gt;&lt;br&gt;port1 mgmt | port2 WAN&lt;br&gt;port3 LAN" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;arcSize=12;fillColor=#f8cecc;strokeColor=#b85450;align=left;spacingLeft=40" vertex="1" parent="1">
+          <mxGeometry x="960" y="280" width="160" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="isp" value="&lt;b&gt;ISP (IOSv)&lt;/b&gt;&lt;br&gt;Gi0/1 198.51.100.1/30 (to FW1)&lt;br&gt;Gi0/2 198.51.100.5/30 (to FW2)&lt;br&gt;Lo0 8.8.8.8/32 (&quot;internet&quot;)" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;arcSize=12;fillColor=#dae8fc;strokeColor=#6c8ebf;align=left;spacingLeft=54" vertex="1" parent="1">
+          <mxGeometry x="590" y="270" width="200" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="pc1" value="&lt;b&gt;PC1 (Linux)&lt;/b&gt;&lt;br&gt;10.1.1.10/24&lt;br&gt;gw 10.1.1.1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;arcSize=12;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacingLeft=40" vertex="1" parent="1">
+          <mxGeometry x="300" y="480" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="web" value="&lt;b&gt;WEB (Linux, DMZ)&lt;/b&gt;&lt;br&gt;10.1.99.10/24&lt;br&gt;gw 10.1.99.1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;arcSize=12;fillColor=#e1d5e7;strokeColor=#9673a6;align=left;spacingLeft=40" vertex="1" parent="1">
+          <mxGeometry x="60" y="285" width="170" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="pc2" value="&lt;b&gt;PC2 (Linux)&lt;/b&gt;&lt;br&gt;10.2.2.10/24&lt;br&gt;gw 10.2.2.1" style="rounded=1;whiteSpace=wrap;html=1;fontSize=11;arcSize=12;fillColor=#d5e8d4;strokeColor=#82b366;align=left;spacingLeft=40" vertex="1" parent="1">
+          <mxGeometry x="960" y="480" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="mg1" value="Mgmt net 10.0.0.0/24 (EVE cloud0)" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="280" y="90" width="200" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="mg2" value="Mgmt net 10.0.0.0/24 (EVE cloud0)" style="ellipse;shape=cloud;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10" vertex="1" parent="1">
+          <mxGeometry x="940" y="90" width="200" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="e0" value="port1 mgmt (GUI/SSH)" style="endArrow=none;html=1;strokeWidth=2;fontSize=10;labelBackgroundColor=#ffffff" edge="1" parent="1" source="fw1" target="mg1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="port3 | 10.1.1.0/24 (.1)" style="endArrow=none;html=1;strokeWidth=2;fontSize=10;labelBackgroundColor=#ffffff" edge="1" parent="1" source="fw1" target="pc1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e2" value="port4 | 10.1.99.0/24 (.1)" style="endArrow=none;html=1;strokeWidth=2;fontSize=10;labelBackgroundColor=#ffffff" edge="1" parent="1" source="fw1" target="web">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="port2 | 198.51.100.0/30 (.2)" style="endArrow=none;html=1;strokeWidth=2;fontSize=10;labelBackgroundColor=#ffffff" edge="1" parent="1" source="fw1" target="isp">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e4" value="198.51.100.4/30 | port2 (.6)" style="endArrow=none;html=1;strokeWidth=2;fontSize=10;labelBackgroundColor=#ffffff" edge="1" parent="1" source="isp" target="fw2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e5" value="port3 | 10.2.2.0/24 (.1)" style="endArrow=none;html=1;strokeWidth=2;fontSize=10;labelBackgroundColor=#ffffff" edge="1" parent="1" source="fw2" target="pc2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e6" value="port1 mgmt" style="endArrow=none;html=1;strokeWidth=2;fontSize=10;labelBackgroundColor=#ffffff" edge="1" parent="1" source="fw2" target="mg2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="tun" value="IPsec IKEv2 tunnel FW1 - FW2 (Lab 4)" style="endArrow=none;html=1;dashed=1;dashPattern=4 3;strokeColor=#b85450;strokeWidth=3;fontSize=11;fontColor=#b85450;curved=1;labelBackgroundColor=#ffffff" edge="1" parent="1" source="fw1" target="fw2">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="690" y="200" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="title" value="FortiGate practice lab (separate EVE-NG lab: 2 FortiGate-VM, 1 IOSv, 3 Linux hosts)" style="text;html=1;strokeColor=none;fillColor=none;align=left;fontSize=16;fontStyle=1" vertex="1" parent="1">
+          <mxGeometry x="60" y="20" width="820" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" value="Lab 1 FW1 interfaces, default route, outbound NAT policy | Lab 2 security profiles + logs | Lab 3 address/service objects, policy order, VIP to WEB (DMZ) | Lab 4 site-to-site IPsec FW1-FW2 | Lab 5 backup, admin profiles, policy review | Lab 6 break-fix drills" style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;fontSize=11" vertex="1" parent="1">
+          <mxGeometry x="60" y="620" width="1060" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="note" value="Stop the main 12-router lab before starting this one (each FortiGate-VM needs about 2 GB RAM). Addresses use documentation ranges (198.51.100.0/24)." style="text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;align=left;fontSize=11;fontColor=#8c3a37" vertex="1" parent="1">
+          <mxGeometry x="60" y="680" width="1060" height="40" as="geometry" />
+        </mxCell>
+      <mxCell id="ico_fw1" value="" vertex="1" parent="1" style="sketch=0;html=1;pointerEvents=1;dashed=0;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fillColor=#cc0000;shape=mxgraph.cisco.firewalls.firewall;"><mxGeometry x="308.0" y="288.0" width="25" height="32" as="geometry" /></mxCell><mxCell id="ico_fw2" value="" vertex="1" parent="1" style="sketch=0;html=1;pointerEvents=1;dashed=0;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fillColor=#cc0000;shape=mxgraph.cisco.firewalls.firewall;"><mxGeometry x="968.0" y="288.0" width="25" height="32" as="geometry" /></mxCell><mxCell id="ico_isp" value="" vertex="1" parent="1" style="sketch=0;html=1;pointerEvents=1;dashed=0;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fillColor=#d79b00;shape=mxgraph.cisco.routers.router;"><mxGeometry x="598.0" y="278.0" width="39" height="26" as="geometry" /></mxCell><mxCell id="ico_pc1" value="" vertex="1" parent="1" style="sketch=0;html=1;pointerEvents=1;dashed=0;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fillColor=#036897;shape=mxgraph.cisco.computers_and_peripherals.pc;"><mxGeometry x="308.0" y="488.0" width="25" height="35" as="geometry" /></mxCell><mxCell id="ico_pc2" value="" vertex="1" parent="1" style="sketch=0;html=1;pointerEvents=1;dashed=0;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fillColor=#036897;shape=mxgraph.cisco.computers_and_peripherals.pc;"><mxGeometry x="968.0" y="488.0" width="25" height="35" as="geometry" /></mxCell><mxCell id="ico_web" value="" vertex="1" parent="1" style="sketch=0;html=1;pointerEvents=1;dashed=0;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fillColor=#7d5fa6;shape=mxgraph.cisco.computers_and_peripherals.pc;"><mxGeometry x="68.0" y="293.0" width="25" height="35" as="geometry" /></mxCell></root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

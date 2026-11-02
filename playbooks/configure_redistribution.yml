@@ -1,0 +1,80 @@
+---
+# configure_redistribution.yml
+# Full loop-prevention tag design for the two EIGRP/OSPF redistribution points.
+#
+#   EIGRP -> OSPF : tag 100   (R4 and R6, route-map EIGRP-TO-OSPF)
+#   OSPF  -> EIGRP: tag 200   (R6, route-map OSPF-TO-EIGRP)
+#   Never send a route back where it came from:
+#     EIGRP-TO-OSPF  denies tag 200  (it came from OSPF)
+#     OSPF-TO-EIGRP  denies tag 100  (it came from EIGRP)
+#
+# Every task saves the config (save_when: modified) so a node restart
+# in EVE-NG cannot undo it.
+#
+# Usage (from ~/ansible-lab):
+#   ansible-playbook -i inventory_enarsi.ini configure_redistribution.yml --check --diff
+#   ansible-playbook -i inventory_enarsi.ini configure_redistribution.yml
+
+- name: R4 - EIGRP to OSPF route-map
+  hosts: er4
+  gather_facts: no
+  tasks:
+    - name: EIGRP-TO-OSPF seq 5 - deny routes that came from OSPF (tag 200)
+      cisco.ios.ios_config:
+        parents: "route-map EIGRP-TO-OSPF deny 5"
+        lines:
+          - "match tag 200"
+        save_when: modified
+
+    - name: EIGRP-TO-OSPF seq 10 - tag everything else 100
+      cisco.ios.ios_config:
+        parents: "route-map EIGRP-TO-OSPF permit 10"
+        lines:
+          - "set tag 100"
+        save_when: modified
+
+    - name: OSPF-TO-EIGRP seq 5 - deny routes that came from EIGRP (tag 100)
+      cisco.ios.ios_config:
+        parents: "route-map OSPF-TO-EIGRP deny 5"
+        lines:
+          - "match tag 100"
+        save_when: modified
+
+    - name: OSPF-TO-EIGRP seq 10 - tag everything else 200
+      cisco.ios.ios_config:
+        parents: "route-map OSPF-TO-EIGRP permit 10"
+        lines:
+          - "set tag 200"
+        save_when: modified
+
+- name: R6 - both route-maps
+  hosts: er6
+  gather_facts: no
+  tasks:
+    - name: EIGRP-TO-OSPF seq 5 - deny routes that came from OSPF (tag 200)
+      cisco.ios.ios_config:
+        parents: "route-map EIGRP-TO-OSPF deny 5"
+        lines:
+          - "match tag 200"
+        save_when: modified
+
+    - name: EIGRP-TO-OSPF seq 10 - tag everything else 100
+      cisco.ios.ios_config:
+        parents: "route-map EIGRP-TO-OSPF permit 10"
+        lines:
+          - "set tag 100"
+        save_when: modified
+
+    - name: OSPF-TO-EIGRP seq 5 - deny routes that came from EIGRP (tag 100)
+      cisco.ios.ios_config:
+        parents: "route-map OSPF-TO-EIGRP deny 5"
+        lines:
+          - "match tag 100"
+        save_when: modified
+
+    - name: OSPF-TO-EIGRP seq 10 - tag everything else 200
+      cisco.ios.ios_config:
+        parents: "route-map OSPF-TO-EIGRP permit 10"
+        lines:
+          - "set tag 200"
+        save_when: modified

@@ -1,0 +1,95 @@
+---
+# configure_r10_bgp.yml
+# Build step 3: R9 becomes the transit AS (AS65002), R10 joins as AS65003.
+#
+#   R8 (AS65001) -- eBGP -- R9 (AS65002) -- eBGP -- R10 (AS65003)
+#                          10.10.10.0/30          10.10.11.0/30
+#
+# Plays:
+#   1. R9:  Gi0/2 toward R10 and the eBGP neighbor to R10
+#   2. R10: Loopback0, test prefix 10.100.10.0/24, Gi0/1 toward R9, BGP AS65003
+#
+# R10 Gi0/2 and Gi0/3 (toward R11 / R12) are left alone for the DMVPN step.
+# Needs er10 in [bgp_lab] in inventory_enarsi.ini (management IP + SSH working).
+# Every task saves the config so an EVE-NG node restart cannot undo it.
+#
+# Usage (from ~/ansible-lab):
+#   ansible-playbook -i inventory_enarsi.ini configure_r10_bgp.yml --check --diff
+#   ansible-playbook -i inventory_enarsi.ini configure_r10_bgp.yml
+
+- name: R9 - add link and eBGP neighbor toward R10
+  hosts: er9
+  gather_facts: no
+  tasks:
+    - name: Gi0/2 toward R10
+      cisco.ios.ios_config:
+        parents: "interface GigabitEthernet0/2"
+        lines:
+          - "description Link to R10"
+          - "ip address 10.10.11.1 255.255.255.252"
+          - "no shutdown"
+        save_when: modified
+
+    - name: eBGP neighbor R10
+      cisco.ios.ios_config:
+        parents: "router bgp 65002"
+        lines:
+          - "neighbor 10.10.11.2 remote-as 65003"
+          - "neighbor 10.10.11.2 description eBGP to R10"
+        save_when: modified
+
+    - name: Activate R10 in address-family ipv4
+      cisco.ios.ios_config:
+        parents:
+          - "router bgp 65002"
+          - "address-family ipv4"
+        lines:
+          - "neighbor 10.10.11.2 activate"
+        save_when: modified
+
+- name: R10 - AS65003 edge router
+  hosts: er10
+  gather_facts: no
+  tasks:
+    - name: Loopback0
+      cisco.ios.ios_config:
+        parents: "interface Loopback0"
+        lines:
+          - "ip address 10.255.0.10 255.255.255.255"
+        save_when: modified
+
+    - name: Loopback100 (test prefix to advertise into the transit AS)
+      cisco.ios.ios_config:
+        parents: "interface Loopback100"
+        lines:
+          - "ip address 10.100.10.1 255.255.255.0"
+        save_when: modified
+
+    - name: Gi0/1 toward R9
+      cisco.ios.ios_config:
+        parents: "interface GigabitEthernet0/1"
+        lines:
+          - "description Link to R9"
+          - "ip address 10.10.11.2 255.255.255.252"
+          - "no shutdown"
+        save_when: modified
+
+    - name: BGP AS65003
+      cisco.ios.ios_config:
+        parents: "router bgp 65003"
+        lines:
+          - "bgp router-id 10.255.0.10"
+          - "neighbor 10.10.11.1 remote-as 65002"
+          - "neighbor 10.10.11.1 description eBGP to R9"
+        save_when: modified
+
+    - name: BGP address-family ipv4
+      cisco.ios.ios_config:
+        parents:
+          - "router bgp 65003"
+          - "address-family ipv4"
+        lines:
+          - "neighbor 10.10.11.1 activate"
+          - "network 10.255.0.10 mask 255.255.255.255"
+          - "network 10.100.10.0 mask 255.255.255.0"
+        save_when: modified

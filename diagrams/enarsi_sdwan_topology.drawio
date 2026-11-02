@@ -1,0 +1,76 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="ENARSI SD-WAN lab" id="enarsi-sdwan">
+    <mxGraphModel dx="1100" dy="760" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1000" pageHeight="700" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="title" value="ENARSI + FortiGate SD-WAN lab (separate EVE-NG lab)" style="text;html=1;fontSize=16;fontStyle=1;align=center;" vertex="1" parent="1">
+          <mxGeometry x="260" y="10" width="480" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="inet" value="INET (IOSv)&#xa;Lo0 8.8.8.8/32" style="sketch=0;html=1;pointerEvents=1;dashed=0;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fillColor=#036897;shape=mxgraph.cisco.routers.router;" vertex="1" parent="1">
+          <mxGeometry x="461" y="65" width="78" height="53" as="geometry"/>
+        </mxCell>
+        <mxCell id="ispa" value="ISP-A (IOSv)" style="sketch=0;html=1;pointerEvents=1;dashed=0;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fillColor=#d79b00;shape=mxgraph.cisco.routers.router;" vertex="1" parent="1">
+          <mxGeometry x="241" y="184" width="78" height="53" as="geometry"/>
+        </mxCell>
+        <mxCell id="ispb" value="ISP-B (IOSv)" style="sketch=0;html=1;pointerEvents=1;dashed=0;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fillColor=#d79b00;shape=mxgraph.cisco.routers.router;" vertex="1" parent="1">
+          <mxGeometry x="681" y="184" width="78" height="53" as="geometry"/>
+        </mxCell>
+        <mxCell id="fw1" value="FW1 (FortiGate-VM, HQ)&#xa;port1 mgmt, port2 WAN1,&#xa;port3 WAN2, port4 LAN" style="sketch=0;html=1;pointerEvents=1;dashed=0;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fillColor=#cc0000;shape=mxgraph.cisco.firewalls.firewall;" vertex="1" parent="1">
+          <mxGeometry x="135" y="338" width="50" height="65" as="geometry"/>
+        </mxCell>
+        <mxCell id="fw2" value="FW2 (FortiGate-VM, branch)&#xa;port1 mgmt, port2 WAN1,&#xa;port3 WAN2, port4 LAN" style="sketch=0;html=1;pointerEvents=1;dashed=0;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fillColor=#cc0000;shape=mxgraph.cisco.firewalls.firewall;" vertex="1" parent="1">
+          <mxGeometry x="815" y="338" width="50" height="65" as="geometry"/>
+        </mxCell>
+        <mxCell id="core" value="CORE (IOSv)&#xa;HQ core router" style="sketch=0;html=1;pointerEvents=1;dashed=0;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fillColor=#036897;shape=mxgraph.cisco.routers.router;" vertex="1" parent="1">
+          <mxGeometry x="121" y="474" width="78" height="53" as="geometry"/>
+        </mxCell>
+        <mxCell id="pc1" value="PC1 (HQ LAN)&#xa;10.1.1.10/24" style="sketch=0;html=1;pointerEvents=1;dashed=0;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fillColor=#036897;shape=mxgraph.cisco.computers_and_peripherals.pc;" vertex="1" parent="1">
+          <mxGeometry x="135" y="580" width="50" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="pc2" value="PC2 (branch LAN)&#xa;10.2.2.10/24" style="sketch=0;html=1;pointerEvents=1;dashed=0;strokeColor=#ffffff;strokeWidth=2;verticalLabelPosition=bottom;verticalAlign=top;align=center;outlineConnect=0;fillColor=#036897;shape=mxgraph.cisco.computers_and_peripherals.pc;" vertex="1" parent="1">
+          <mxGeometry x="815" y="460" width="50" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="mgmt" value="Management cloud (static addresses, Ansible VM)" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="380" y="560" width="240" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="e1" value="198.51.100.0/30" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="fw1" target="ispa">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" value="203.0.113.0/30" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="fw1" target="ispb">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" value="198.51.100.4/30" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="fw2" target="ispa">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" value="203.0.113.4/30" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="fw2" target="ispb">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" value="192.0.2.0/30" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="ispa" target="inet">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e6" value="192.0.2.4/30" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="ispb" target="inet">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e7" value="10.10.1.0/30" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="fw1" target="core">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e8" value="HQ LAN 10.1.1.0/24" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="core" target="pc1">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e9" value="Branch LAN 10.2.2.0/24" style="endArrow=none;html=1;strokeWidth=2;" edge="1" parent="1" source="fw2" target="pc2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e10" value="IPsec overlay over both WANs (Lab 3), SD-WAN zone" style="endArrow=none;html=1;dashed=1;strokeColor=#b85450;strokeWidth=3;" edge="1" parent="1" source="fw1" target="fw2">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e11" value="" style="endArrow=none;html=1;dashed=1;strokeColor=#999999;" edge="1" parent="1" source="fw1" target="mgmt">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e12" value="" style="endArrow=none;html=1;dashed=1;strokeColor=#999999;" edge="1" parent="1" source="fw2" target="mgmt">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

@@ -1,0 +1,190 @@
+---
+# configure_ibgp_rr.yml
+# Module 5 (part 1): iBGP, route reflectors and communities on R1, R2, R3 (AS 65100).
+# No new cabling: the BGP sessions run loopback to loopback over the EIGRP AS 100
+# underlay that already connects R1, R2 and R3.
+#
+#   ansible-playbook -i inventory_enarsi.ini configure_ibgp_rr.yml -e bgp_lab=<name>
+#
+#   bgp_lab=off          remove all of this module's config (default)
+#   bgp_lab=full_mesh    R1-R2, R1-R3 and R2-R3 all peer (classic iBGP full mesh)
+#   bgp_lab=hub_only     R1 peers with R2 and R3, but R2 and R3 do NOT peer and R1 is
+#                        NOT a reflector -> iBGP split horizon: R3 never learns R2's prefix
+#   bgp_lab=rr           same sessions, but R1 is a route reflector (R2, R3 are clients)
+#   bgp_lab=rr_community rr + R2 tags its prefix with community 65100:222 and R3 drops
+#                        any route carrying that community (inbound route-map on R3)
+#
+# Each router originates one prefix from Loopback10:
+#   R1 10.20.1.0/24    R2 10.20.2.0/24    R3 10.20.3.0/24
+# Router IDs are the Loopback0 addresses 10.255.0.1 / .2 / .3.
+#
+# Every run first removes ALL of this module's config (one command per task,
+# ignore_errors), then applies the chosen lab. Saved with save_when: modified.
+# 'neighbor ... send-community' is required for communities to cross a session
+# (the default is not to send them).
+
+- name: iBGP / route reflector / community lab on R1, R2, R3
+  hosts: er1,er2,er3
+  gather_facts: no
+  vars:
+    bgp_lab: "off"
+    allowed_labs: ["off", "full_mesh", "hub_only", "rr", "rr_community"]
+    host_n: "{{ inventory_hostname[2:] }}"
+    peers:
+      "off": { er1: [], er2: [], er3: [] }
+      full_mesh:
+        er1: [2, 3]
+        er2: [1, 3]
+        er3: [1, 2]
+      hub_only: &hub
+        er1: [2, 3]
+        er2: [1]
+        er3: [1]
+      rr: *hub
+      rr_community: *hub
+    rr_clients:
+      "off": { er1: [], er2: [], er3: [] }
+      full_mesh: { er1: [], er2: [], er3: [] }
+      hub_only: { er1: [], er2: [], er3: [] }
+      rr: { er1: [2, 3], er2: [], er3: [] }
+      rr_community: { er1: [2, 3], er2: [], er3: [] }
+  tasks:
+    - name: Check the lab name
+      ansible.builtin.assert:
+        that: bgp_lab in allowed_labs
+        fail_msg: "bgp_lab must be one of: {{ allowed_labs | join(', ') }}"
+        quiet: true
+
+    # ---- prepare (always safe to repeat) ----
+    - name: Loopback10 (the prefix this router originates)
+      cisco.ios.ios_config:
+        parents: "interface Loopback10"
+        lines:
+          - "ip address 10.20.{{ host_n }}.1 255.255.255.0"
+        save_when: modified
+
+    - name: Show communities as AA:NN
+      cisco.ios.ios_config:
+        lines:
+          - "ip bgp-community new-format"
+        save_when: modified
+
+    # ---- reset ----
+    - name: Remove BGP process
+      cisco.ios.ios_config:
+        lines: ["no router bgp 65100"]
+      ignore_errors: true
+
+    - name: Remove route-map SET-COMM
+      cisco.ios.ios_config:
+        lines: ["no route-map SET-COMM"]
+      ignore_errors: true
+
+    - name: Remove route-map BLOCK-COMM
+      cisco.ios.ios_config:
+        lines: ["no route-map BLOCK-COMM"]
+      ignore_errors: true
+
+    - name: Remove community-list
+      cisco.ios.ios_config:
+        lines: ["no ip community-list standard BLOCK-222"]
+      ignore_errors: true
+
+    # ---- apply ----
+    - name: R2 route-map that tags its prefix
+      cisco.ios.ios_config:
+        parents: "route-map SET-COMM permit 10"
+        lines:
+          - "set community 65100:222"
+        save_when: modified
+      when: bgp_lab == 'rr_community' and inventory_hostname == 'er2'
+
+    - name: R3 community-list
+      cisco.ios.ios_config:
+        lines:
+          - "ip community-list standard BLOCK-222 permit 65100:222"
+        save_when: modified
+      when: bgp_lab == 'rr_community' and inventory_hostname == 'er3'
+
+    - name: R3 route-map seq 10 (drop routes with the community)
+      cisco.ios.ios_config:
+        parents: "route-map BLOCK-COMM deny 10"
+        lines:
+          - "match community BLOCK-222"
+        save_when: modified
+      when: bgp_lab == 'rr_community' and inventory_hostname == 'er3'
+
+    - name: R3 route-map seq 20 (permit everything else)
+      cisco.ios.ios_config:
+        lines:
+          - "route-map BLOCK-COMM permit 20"
+        save_when: modified
+      when: bgp_lab == 'rr_community' and inventory_hostname == 'er3'
+
+    - name: BGP process
+      cisco.ios.ios_config:
+        parents: "router bgp 65100"
+        lines:
+          - "bgp router-id 10.255.0.{{ host_n }}"
+          - "no bgp default ipv4-unicast"
+          - "bgp log-neighbor-changes"
+        save_when: modified
+      when: bgp_lab != 'off'
+
+    - name: Neighbors (iBGP, loopback to loopback)
+      cisco.ios.ios_config:
+        parents: "router bgp 65100"
+        lines:
+          - "neighbor 10.255.0.{{ item }} remote-as 65100"
+          - "neighbor 10.255.0.{{ item }} update-source Loopback0"
+        save_when: modified
+      loop: "{{ peers[bgp_lab][inventory_hostname] }}"
+      when: bgp_lab != 'off'
+
+    - name: Originate this router's prefix
+      cisco.ios.ios_config:
+        parents:
+          - "router bgp 65100"
+          - "address-family ipv4"
+        lines:
+          - "network 10.20.{{ host_n }}.0 mask 255.255.255.0{{ ' route-map SET-COMM' if (bgp_lab == 'rr_community' and inventory_hostname == 'er2') else '' }}"
+        save_when: modified
+      when: bgp_lab != 'off'
+
+    - name: Activate neighbors and send communities
+      cisco.ios.ios_config:
+        parents:
+          - "router bgp 65100"
+          - "address-family ipv4"
+        lines:
+          - "neighbor 10.255.0.{{ item }} activate"
+          - "neighbor 10.255.0.{{ item }} send-community"
+        save_when: modified
+      loop: "{{ peers[bgp_lab][inventory_hostname] }}"
+      when: bgp_lab != 'off'
+
+    - name: R1 reflects to its clients
+      cisco.ios.ios_config:
+        parents:
+          - "router bgp 65100"
+          - "address-family ipv4"
+        lines:
+          - "neighbor 10.255.0.{{ item }} route-reflector-client"
+        save_when: modified
+      loop: "{{ rr_clients[bgp_lab][inventory_hostname] }}"
+      when: bgp_lab != 'off'
+
+    - name: R3 filters routes from R1 with the community
+      cisco.ios.ios_config:
+        parents:
+          - "router bgp 65100"
+          - "address-family ipv4"
+        lines:
+          - "neighbor 10.255.0.1 route-map BLOCK-COMM in"
+        save_when: modified
+      when: bgp_lab == 'rr_community' and inventory_hostname == 'er3'
+
+    - name: Save the cleaned configuration (covers bgp_lab=off)
+      cisco.ios.ios_config:
+        save_when: always
+      when: bgp_lab == 'off'

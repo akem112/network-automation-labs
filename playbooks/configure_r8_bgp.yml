@@ -1,0 +1,160 @@
+---
+# configure_r8_bgp.yml
+# Build step 2: R8 as ASBR #2.
+#   R5 -- OSPF area 0 -- R8 -- eBGP (AS65001 <-> AS65002) -- R9
+#
+# Plays:
+#   1. R5: add Gi0/3 (link to R8) and advertise it in OSPF area 0
+#   2. R8: interfaces, OSPF area 0, eBGP to R9, two-way redistribution with
+#      route-maps and a tag so routes cannot be re-injected (loop prevention)
+#   3. R9: minimal peer (loopback, test prefix 10.99.9.0/24, eBGP to R8)
+#
+# Needs er8 and er9 in inventory_enarsi.ini in a NEW group [bgp_lab]
+# (do NOT put them in ospf_lab; configure_ospf.yml would need host_vars for them).
+# Their Gi0/0 management IPs and SSH must already work, like R1-R7.
+#
+# Usage (from ~/ansible-lab):
+#   ansible-playbook -i inventory_enarsi.ini configure_r8_bgp.yml --check --diff
+#   ansible-playbook -i inventory_enarsi.ini configure_r8_bgp.yml
+
+# ---------------- R5: new link toward R8 ----------------
+- name: R5 - add link to R8 and advertise it in OSPF area 0
+  hosts: er5
+  gather_facts: no
+  tasks:
+    - name: Configure R5 Gi0/3
+      cisco.ios.ios_config:
+        parents: "interface GigabitEthernet0/3"
+        lines:
+          - "description Link to R8"
+          - "ip address 10.10.9.1 255.255.255.252"
+          - "no shutdown"
+
+    - name: Advertise R5-R8 link in OSPF area 0
+      cisco.ios.ios_config:
+        parents: "router ospf 1"
+        lines:
+          - "network 10.10.9.0 0.0.0.3 area 0"
+        save_when: modified
+
+# ---------------- R8: ASBR (OSPF <-> BGP) ----------------
+- name: R8 - OSPF area 0, eBGP to R9, redistribution
+  hosts: er8
+  gather_facts: no
+  tasks:
+    - name: Loopback0
+      cisco.ios.ios_config:
+        parents: "interface Loopback0"
+        lines:
+          - "ip address 10.255.0.8 255.255.255.255"
+
+    - name: Gi0/1 toward R5
+      cisco.ios.ios_config:
+        parents: "interface GigabitEthernet0/1"
+        lines:
+          - "description Link to R5"
+          - "ip address 10.10.9.2 255.255.255.252"
+          - "no shutdown"
+
+    - name: Gi0/2 toward R9
+      cisco.ios.ios_config:
+        parents: "interface GigabitEthernet0/2"
+        lines:
+          - "description Link to R9"
+          - "ip address 10.10.10.1 255.255.255.252"
+          - "no shutdown"
+
+    - name: OSPF process, area 0
+      cisco.ios.ios_config:
+        parents: "router ospf 1"
+        lines:
+          - "router-id 10.255.0.8"
+          - "network 10.10.9.0 0.0.0.3 area 0"
+          - "network 10.255.0.8 0.0.0.0 area 0"
+
+    # BGP -> OSPF: tag everything that comes from BGP with 300
+    - name: Route-map BGP-TO-OSPF (tags routes with 300)
+      cisco.ios.ios_config:
+        parents: "route-map BGP-TO-OSPF permit 10"
+        lines:
+          - "set tag 300"
+
+    # OSPF -> BGP: refuse anything carrying tag 300, allow the rest
+    - name: Route-map OSPF-TO-BGP (deny tag 300)
+      cisco.ios.ios_config:
+        parents: "route-map OSPF-TO-BGP deny 10"
+        lines:
+          - "match tag 300"
+
+    - name: Route-map OSPF-TO-BGP (permit everything else)
+      cisco.ios.ios_config:
+        lines:
+          - "route-map OSPF-TO-BGP permit 20"
+
+    - name: eBGP neighbor and OSPF -> BGP redistribution
+      cisco.ios.ios_config:
+        parents: "router bgp 65001"
+        lines:
+          - "bgp router-id 10.255.0.8"
+          - "neighbor 10.10.10.2 remote-as 65002"
+          - "neighbor 10.10.10.2 description eBGP to R9"
+
+    - name: BGP address-family ipv4
+      cisco.ios.ios_config:
+        parents:
+          - "router bgp 65001"
+          - "address-family ipv4"
+        lines:
+          - "neighbor 10.10.10.2 activate"
+          - "redistribute ospf 1 match internal external 1 external 2 route-map OSPF-TO-BGP"
+
+    - name: BGP -> OSPF redistribution
+      cisco.ios.ios_config:
+        parents: "router ospf 1"
+        lines:
+          - "redistribute bgp 65001 subnets metric 50 metric-type 1 route-map BGP-TO-OSPF"
+        save_when: modified
+
+# ---------------- R9: minimal eBGP peer ----------------
+- name: R9 - minimal AS65002 peer with a test prefix
+  hosts: er9
+  gather_facts: no
+  tasks:
+    - name: Loopback0
+      cisco.ios.ios_config:
+        parents: "interface Loopback0"
+        lines:
+          - "ip address 10.255.0.9 255.255.255.255"
+
+    - name: Loopback100 (test prefix to advertise into AS65001)
+      cisco.ios.ios_config:
+        parents: "interface Loopback100"
+        lines:
+          - "ip address 10.99.9.1 255.255.255.0"
+
+    - name: Gi0/1 toward R8
+      cisco.ios.ios_config:
+        parents: "interface GigabitEthernet0/1"
+        lines:
+          - "description Link to R8"
+          - "ip address 10.10.10.2 255.255.255.252"
+          - "no shutdown"
+
+    - name: BGP AS65002
+      cisco.ios.ios_config:
+        parents: "router bgp 65002"
+        lines:
+          - "bgp router-id 10.255.0.9"
+          - "neighbor 10.10.10.1 remote-as 65001"
+          - "neighbor 10.10.10.1 description eBGP to R8"
+
+    - name: BGP address-family ipv4
+      cisco.ios.ios_config:
+        parents:
+          - "router bgp 65002"
+          - "address-family ipv4"
+        lines:
+          - "neighbor 10.10.10.1 activate"
+          - "network 10.255.0.9 mask 255.255.255.255"
+          - "network 10.99.9.0 mask 255.255.255.0"
+        save_when: modified

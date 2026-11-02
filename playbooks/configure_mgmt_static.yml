@@ -1,0 +1,50 @@
+---
+# configure_mgmt_static.yml
+# Freeze each router's management address so the inventory never goes stale again.
+# It reads the address from the inventory (ansible_host), finds which interface on the
+# router currently holds that address, and replaces "ip address dhcp" with the same
+# address as a static one. The address does not change, so the SSH session survives.
+#
+#   Plan (changes nothing, prints what it would do):
+#     ansible-playbook -i inventory_enarsi.ini configure_mgmt_static.yml
+#   Apply (writes the config and saves it):
+#     ansible-playbook -i inventory_enarsi.ini configure_mgmt_static.yml -e apply=true
+#
+# Safety: it stops on any router where exactly one interface does not hold the inventory
+# address (for example a wrong inventory entry), so it cannot touch the wrong interface.
+# Run the hostname check first and confirm erN returns RN.
+
+- name: Make management addresses static
+  hosts: all
+  gather_facts: no
+  vars:
+    apply: false
+    mgmt_mask: 255.255.255.0
+  tasks:
+    - name: Read the interface summary
+      cisco.ios.ios_command:
+        commands:
+          - show ip interface brief
+      register: ib
+
+    - name: Find the interface holding the inventory address
+      ansible.builtin.set_fact:
+        mgmt_if: "{{ ib.stdout[0] | regex_findall('^([^ ]+) +' ~ (ansible_host | regex_escape) ~ ' ', multiline=True) }}"
+
+    - name: Stop unless exactly one interface holds that address
+      ansible.builtin.assert:
+        that: mgmt_if | list | length == 1
+        fail_msg: "{{ inventory_hostname }}: {{ ansible_host }} was found on {{ mgmt_if | list | length }} interfaces. Check the inventory."
+        quiet: true
+
+    - name: Show the plan
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: interface {{ mgmt_if | first }} will be set to static {{ ansible_host }} {{ mgmt_mask }}{{ '' if apply | bool else ' (plan only, nothing changed)' }}"
+
+    - name: Set the static address and save
+      cisco.ios.ios_config:
+        parents: "interface {{ mgmt_if | first }}"
+        lines:
+          - "ip address {{ ansible_host }} {{ mgmt_mask }}"
+        save_when: always
+      when: apply | bool

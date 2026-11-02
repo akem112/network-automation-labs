@@ -1,0 +1,8 @@
+# Lab-only settings. Copy to ansible.cfg (git-ignored).
+[defaults]
+inventory = inventory_enarsi.ini
+host_key_checking = False   # closed EVE-NG lab only; addresses change after restarts
+
+[persistent_connection]
+command_timeout = 90
+connect_timeout = 60

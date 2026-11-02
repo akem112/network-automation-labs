@@ -1,0 +1,146 @@
+---
+# configure_pbr_ipsla.yml
+# Module 4: Policy-based routing (PBR) and IP SLA tracking, all on R1.
+#
+# R1 has two ways toward the rest of the lab:
+#     path A: R1 -> R6 (Gi0/3, next hop 10.10.20.2) -> R5 -> R8
+#     path B: R1 -> R3 -> R4 -> R5 -> R8
+# The routing table picks one. PBR lets us force the other one for chosen traffic.
+#
+#   ansible-playbook -i inventory_enarsi.ini configure_pbr_ipsla.yml -e pbr_lab=<name>
+#
+#   pbr_lab=off           remove everything from this module (default)
+#   pbr_lab=pbr           local PBR: packets R1 itself sends FROM 10.255.0.1 TO 10.255.0.8
+#                         go to 10.10.20.2 no matter what the routing table says
+#   pbr_lab=pbr_track     same, but only while IP SLA probe 1 (icmp-echo to the next hop)
+#                         succeeds; when the probe fails PBR is skipped and normal
+#                         routing takes over
+#   pbr_lab=static_track  no PBR: a static route 10.255.0.8/32 via 10.10.20.2 that is
+#                         installed only while track 1 is up (AD 1 beats EIGRP 170)
+#
+# Override the PBR next hop if your baseline already goes via R6 (also name R1's
+# interface that faces that next hop, for the probe):
+#   -e pbr_next_hop=10.10.3.2 -e pbr_sla_source_if=GigabitEthernet0/2
+# (pbr and pbr_track only; static_track always uses 10.10.20.2)
+#
+# Every run first removes ALL of this module's config (one command per task,
+# ignore_errors), then applies the chosen lab. Saved with save_when: modified.
+#
+# 'ip local policy' only affects packets that R1 ORIGINATES (ping, traceroute,
+# telnet from R1). Packets that pass THROUGH a router need 'ip policy route-map'
+# on the INGRESS interface instead (see the chat message).
+
+- name: PBR and IP SLA on R1
+  hosts: er1
+  gather_facts: no
+  vars:
+    pbr_lab: "off"
+    pbr_next_hop: "10.10.20.2"
+    # R1 interface that faces pbr_next_hop. The probe is sourced from it so that the
+    # track goes Down when THAT link fails (otherwise the probe can reach the next hop
+    # the long way round and the track stays Up while PBR is already skipped).
+    pbr_sla_source_if: "GigabitEthernet0/3"
+    allowed_labs: ["off", "pbr", "pbr_track", "static_track"]
+  tasks:
+    - name: Check the lab name
+      ansible.builtin.assert:
+        that: pbr_lab in allowed_labs
+        fail_msg: "pbr_lab must be one of: {{ allowed_labs | join(', ') }}"
+        quiet: true
+
+    # ---- reset: order matters (users of the track object go first) ----
+    - name: Remove local policy
+      cisco.ios.ios_config:
+        lines: ["no ip local policy route-map PBR-LOCAL"]
+      ignore_errors: true
+
+    - name: Remove route-map
+      cisco.ios.ios_config:
+        lines: ["no route-map PBR-LOCAL"]
+      ignore_errors: true
+
+    - name: Remove tracked static route
+      cisco.ios.ios_config:
+        lines: ["no ip route 10.255.0.8 255.255.255.255 10.10.20.2 track 1"]
+      ignore_errors: true
+
+    - name: Remove track object
+      cisco.ios.ios_config:
+        lines: ["no track 1"]
+      ignore_errors: true
+
+    - name: Remove IP SLA probe
+      cisco.ios.ios_config:
+        lines: ["no ip sla 1"]
+      ignore_errors: true
+
+    - name: Remove access-list
+      cisco.ios.ios_config:
+        lines: ["no ip access-list extended PBR-TRAFFIC"]
+      ignore_errors: true
+
+    # ---- apply ----
+    - name: Access-list that selects the traffic (source loopback to R8 loopback)
+      cisco.ios.ios_config:
+        parents: "ip access-list extended PBR-TRAFFIC"
+        lines:
+          - "permit ip host 10.255.0.1 host 10.255.0.8"
+        save_when: modified
+      when: pbr_lab in ['pbr', 'pbr_track']
+
+    - name: IP SLA probe 1 (icmp-echo to the next hop every 5 s)
+      cisco.ios.ios_config:
+        parents:
+          - "ip sla 1"
+          - "icmp-echo {{ pbr_next_hop if pbr_lab == 'pbr_track' else '10.10.20.2' }} source-interface {{ pbr_sla_source_if if pbr_lab == 'pbr_track' else 'GigabitEthernet0/3' }}"
+        lines:
+          - "frequency 5"
+          - "threshold 1000"
+          - "timeout 1000"
+        save_when: modified
+      when: pbr_lab in ['pbr_track', 'static_track']
+
+    - name: Start probe 1 and create track 1
+      cisco.ios.ios_config:
+        lines:
+          - "ip sla schedule 1 life forever start-time now"
+          - "track 1 ip sla 1 reachability"
+        save_when: modified
+      when: pbr_lab in ['pbr_track', 'static_track']
+
+    - name: Route-map, plain PBR
+      cisco.ios.ios_config:
+        parents: "route-map PBR-LOCAL permit 10"
+        lines:
+          - "match ip address PBR-TRAFFIC"
+          - "set ip next-hop {{ pbr_next_hop }}"
+        save_when: modified
+      when: pbr_lab == 'pbr'
+
+    - name: Route-map, PBR with tracking
+      cisco.ios.ios_config:
+        parents: "route-map PBR-LOCAL permit 10"
+        lines:
+          - "match ip address PBR-TRAFFIC"
+          - "set ip next-hop verify-availability {{ pbr_next_hop }} 10 track 1"
+        save_when: modified
+      when: pbr_lab == 'pbr_track'
+
+    - name: Apply the policy to R1's own traffic
+      cisco.ios.ios_config:
+        lines:
+          - "ip local policy route-map PBR-LOCAL"
+        save_when: modified
+      when: pbr_lab in ['pbr', 'pbr_track']
+
+    - name: Tracked static route
+      cisco.ios.ios_config:
+        lines:
+          - "ip route 10.255.0.8 255.255.255.255 10.10.20.2 track 1"
+        save_when: modified
+      when: pbr_lab == 'static_track'
+
+    - name: Save the cleaned configuration (covers pbr_lab=off)
+      cisco.ios.ios_config:
+        save_when: always
+      when: pbr_lab == 'off'

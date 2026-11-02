@@ -1,0 +1,234 @@
+---
+# break_lab.yml
+# Intentionally injects 4 random faults across EIGRP / OSPF / Redistribution
+# for weekend troubleshooting practice. Run from ~/ansible-lab.
+#
+# Usage:
+#   ansible-playbook -i inventory_enarsi.ini break_lab.yml
+#
+# This will pick 4 faults at random out of the pool below, apply them,
+# and write a hidden answer key to ./answer_key.txt on the CONTROL NODE
+# (not on any router). Don't open it until you want to check your work
+# or give up on one.
+#
+# To restore everything to the known-good state afterward, just re-run
+# your existing playbooks:
+#   ansible-playbook -i inventory_enarsi.ini configure_interfaces.yml
+#   ansible-playbook -i inventory_enarsi.ini configure_eigrp.yml
+#   ansible-playbook -i inventory_enarsi.ini configure_ospf.yml
+# (Some faults below are things those playbooks won't auto-fix, e.g.
+#  timer mismatches or stub removal -- noted per fault.)
+
+- name: Pick 4 random faults from the pool
+  hosts: localhost
+  gather_facts: no
+  vars:
+    fault_pool:
+      - id: eigrp_wrong_as
+        desc: "EIGRP: changed R2's AS number from 100 to 101 (neighbor adjacency will drop)"
+      - id: eigrp_passive_interface
+        desc: "EIGRP: set Gi0/1 on R1 as passive-interface (neighbor with R2 will drop)"
+      - id: eigrp_remove_network
+        desc: "EIGRP: removed the network statement for 10.10.4.0/30 on R3 (R3-R4 adjacency drops)"
+      - id: ospf_wrong_area
+        desc: "OSPF: changed R7's area from 1 to 2 on its network statement (adjacency with R6 fails)"
+      - id: ospf_hello_mismatch
+        desc: "OSPF: set hello-interval 15 on R5's Gi0/2 toward R6 (timer mismatch breaks adjacency)"
+      - id: ospf_wrong_wildcard
+        desc: "OSPF: changed R4's wildcard mask for the R5 link to 0.0.0.0 (misses the subnet, adjacency may not form or routes misbehave)"
+      - id: ospf_interface_down
+        desc: "OSPF: shut down R6's Gi0/1 toward R5 (Area 0 adjacency drops, Area 1 isolated from Area 0)"
+      - id: redist_remove_subnets
+        desc: "Redistribution: removed the 'subnets' keyword from R4's EIGRP->OSPF redistribute command (all /30 and /32 routes silently stop redistributing)"
+      - id: redist_wrong_tag
+        desc: "Redistribution: changed R6's OSPF-TO-EIGRP route-map tag from 200 to 999 (breaks the loop-prevention deny match on R4, reopens loop risk)"
+      - id: redist_remove_routemap
+        desc: "Redistribution: removed the route-map from R4's EIGRP redistribution into OSPF (routes still flow but lose their tag, weakening loop protection)"
+      - id: stub_mismatch
+        desc: "Stub area: removed 'area 1 stub' from R7 only, leaving R6 as stub (area type mismatch, adjacency will fail)"
+      - id: loopback_wrong_mask
+        desc: "Misc: changed R5's Loopback0 mask from /32 to /24 (advertises a much larger, wrong network)"
+
+  tasks:
+    - name: Shuffle and select 4 faults
+      ansible.builtin.set_fact:
+        selected_faults: "{{ fault_pool | shuffle }}"
+
+    - name: Trim to first 4
+      ansible.builtin.set_fact:
+        selected_faults: "{{ selected_faults[:4] }}"
+
+    - name: Write answer key (control node only)
+      ansible.builtin.copy:
+        dest: "./answer_key.txt"
+        content: |
+          ENARSI Weekend Troubleshooting Lab — Answer Key
+          Generated: {{ ansible_date_time.iso8601 | default('now') }}
+
+          4 faults were injected. Do not read below until you want a hint
+          or want to check your fix.
+
+          {% for f in selected_faults %}
+          {{ loop.index }}. [{{ f.id }}]
+             {{ f.desc }}
+
+          {% endfor %}
+        mode: '0600'
+
+    - name: Show confirmation (NOT the details)
+      ansible.builtin.debug:
+        msg: "4 faults injected and logged to ./answer_key.txt. Do not open it yet. Good luck."
+
+# ===================== FAULT INJECTION TASKS =====================
+# Each fault below only runs if its id was in the randomly selected set
+# from the play above. We read that back in per-host plays.
+
+- name: Load selected faults
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Re-read answer key to get fault ids back
+      ansible.builtin.slurp:
+        src: "./answer_key.txt"
+      register: key_raw
+
+- name: Apply EIGRP faults
+  hosts: eigrp_lab
+  gather_facts: no
+  vars:
+    answer_key_content: "{{ hostvars['localhost']['key_raw']['content'] | b64decode }}"
+  tasks:
+    - name: Fault - EIGRP wrong AS on R2
+      cisco.ios.ios_config:
+        lines:
+          - "no address-family ipv4 unicast autonomous-system 100"
+          - "address-family ipv4 unicast autonomous-system 101"
+          - "network 10.10.1.0 0.0.0.3"
+          - "network 10.10.2.0 0.0.0.3"
+          - "network 10.255.0.2 0.0.0.0"
+        parents: "router eigrp EIGRP-LAB"
+      when:
+        - inventory_hostname == 'er2'
+        - "'eigrp_wrong_as' in answer_key_content"
+
+    - name: Fault - EIGRP passive-interface on R1 Gi0/1
+      cisco.ios.ios_config:
+        lines:
+          - "passive-interface"
+        parents:
+          - "router eigrp EIGRP-LAB"
+          - "address-family ipv4 unicast autonomous-system 100"
+          - "af-interface GigabitEthernet0/1"
+      when:
+        - inventory_hostname == 'er1'
+        - "'eigrp_passive_interface' in answer_key_content"
+
+    - name: Fault - EIGRP remove network statement on R3
+      cisco.ios.ios_config:
+        lines:
+          - "no network 10.10.4.0 0.0.0.3"
+        parents:
+          - "router eigrp EIGRP-LAB"
+          - "address-family ipv4 unicast autonomous-system 100"
+      when:
+        - inventory_hostname == 'er3'
+        - "'eigrp_remove_network' in answer_key_content"
+
+- name: Apply OSPF faults
+  hosts: ospf_lab
+  gather_facts: no
+  vars:
+    answer_key_content: "{{ hostvars['localhost']['key_raw']['content'] | b64decode }}"
+  tasks:
+    - name: Fault - OSPF wrong area on R7
+      cisco.ios.ios_config:
+        lines:
+          - "no network 10.10.8.0 0.0.0.3 area 1"
+          - "network 10.10.8.0 0.0.0.3 area 2"
+        parents: "router ospf 1"
+      when:
+        - inventory_hostname == 'er7'
+        - "'ospf_wrong_area' in answer_key_content"
+
+    - name: Fault - OSPF hello timer mismatch on R5
+      cisco.ios.ios_config:
+        lines:
+          - "ip ospf hello-interval 15"
+        parents: "interface GigabitEthernet0/2"
+      when:
+        - inventory_hostname == 'er5'
+        - "'ospf_hello_mismatch' in answer_key_content"
+
+    - name: Fault - OSPF wrong wildcard on R4
+      cisco.ios.ios_config:
+        lines:
+          - "no network 10.10.5.0 0.0.0.3 area 0"
+          - "network 10.10.5.0 0.0.0.0 area 0"
+        parents: "router ospf 1"
+      when:
+        - inventory_hostname == 'er4'
+        - "'ospf_wrong_wildcard' in answer_key_content"
+
+    - name: Fault - OSPF interface shutdown on R6
+      cisco.ios.ios_config:
+        lines:
+          - "shutdown"
+        parents: "interface GigabitEthernet0/1"
+      when:
+        - inventory_hostname == 'er6'
+        - "'ospf_interface_down' in answer_key_content"
+
+    - name: Fault - stub mismatch, remove stub from R7 only
+      cisco.ios.ios_config:
+        lines:
+          - "no area 1 stub"
+        parents: "router ospf 1"
+      when:
+        - inventory_hostname == 'er7'
+        - "'stub_mismatch' in answer_key_content"
+
+    - name: Fault - loopback wrong mask on R5
+      cisco.ios.ios_config:
+        lines:
+          - "ip address 10.255.0.5 255.255.255.0"
+        parents: "interface Loopback0"
+      when:
+        - inventory_hostname == 'er5'
+        - "'loopback_wrong_mask' in answer_key_content"
+
+- name: Apply redistribution faults (R4)
+  hosts: er4
+  gather_facts: no
+  vars:
+    answer_key_content: "{{ hostvars['localhost']['key_raw']['content'] | b64decode }}"
+  tasks:
+    - name: Fault - remove subnets keyword from EIGRP->OSPF redistribution
+      cisco.ios.ios_config:
+        lines:
+          - "no redistribute eigrp 100 subnets metric 20 metric-type 1 route-map EIGRP-TO-OSPF"
+          - "redistribute eigrp 100 metric 20 metric-type 1 route-map EIGRP-TO-OSPF"
+        parents: "router ospf 1"
+      when: "'redist_remove_subnets' in answer_key_content"
+
+    - name: Fault - remove route-map from EIGRP->OSPF redistribution
+      cisco.ios.ios_config:
+        lines:
+          - "no redistribute eigrp 100 subnets metric 20 metric-type 1 route-map EIGRP-TO-OSPF"
+          - "redistribute eigrp 100 subnets metric 20 metric-type 1"
+        parents: "router ospf 1"
+      when: "'redist_remove_routemap' in answer_key_content"
+
+- name: Apply redistribution faults (R6)
+  hosts: er6
+  gather_facts: no
+  vars:
+    answer_key_content: "{{ hostvars['localhost']['key_raw']['content'] | b64decode }}"
+  tasks:
+    - name: Fault - wrong tag on R6's OSPF-TO-EIGRP route-map
+      cisco.ios.ios_config:
+        lines:
+          - "no set tag 200"
+          - "set tag 999"
+        parents:
+          - "route-map OSPF-TO-EIGRP permit 10"
+      when: "'redist_wrong_tag' in answer_key_content"

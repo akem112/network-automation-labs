@@ -1,0 +1,261 @@
+---
+# configure_bgp_paths.yml
+# Module 5 (part 2): BGP best-path selection on R8 (AS65001) and R9 (AS65002).
+#
+# Two eBGP sessions between the same two routers give R8 two paths to every R9 prefix:
+#     link A  R8 Gi0/2 10.10.10.1  <->  R9 Gi0/1 10.10.10.2   (existing session)
+#     link B  R8 Gi0/3 10.10.14.1  <->  R9 Gi0/3 10.10.14.2   (new cable, new session)
+# R9 originates 10.99.9.0/24 (Loopback100), so R8 sees that prefix twice.
+#
+#   ansible-playbook -i inventory_enarsi.ini configure_bgp_paths.yml -e path_lab=<name>
+#
+#   path_lab=off         remove everything this module added (link B session, policies)  [default]
+#   path_lab=baseline    both sessions up, no policy. Tie broken by lowest neighbor address -> link A
+#   path_lab=weight      R8: weight 200 on paths from link B                             -> link B
+#   path_lab=local_pref  R8: local preference 200 on paths from link B                   -> link B
+#   path_lab=prepend     R9: prepends AS65002 three times toward R8 on link A            -> link B
+#   path_lab=med         R9: MED 200 toward R8 on link A, MED 50 on link B               -> link B
+#   path_lab=order       R8: weight 100 on link A and local preference 200 on link B
+#                        (weight is checked before local preference)                     -> link A
+#
+# Check on R8:   show ip bgp 10.99.9.0 255.255.255.0
+# 'bgp bestpath compare-routerid' is set on R8 so the final tie-break is deterministic
+# (both paths come from R9, same router ID, so the lowest neighbor address wins).
+# Every run first removes this module's policy (one command per task, ignore_errors), then applies
+# the chosen lab, soft-resets BGP so the policy takes effect, and saves the config.
+# Interface Gi0/3 on R8 and R9 stays configured in every lab (10.10.14.0/30).
+
+- name: BGP path selection lab on R8 and R9
+  hosts: er8,er9
+  gather_facts: no
+  vars:
+    path_lab: "off"
+    allowed_labs: ["off", "baseline", "weight", "local_pref", "prepend", "med", "order"]
+    link_ip: "{{ '10.10.14.1' if inventory_hostname == 'er8' else '10.10.14.2' }}"
+    in_a_set:
+      "off": []
+      baseline: []
+      weight: []
+      local_pref: []
+      prepend: []
+      med: []
+      order: ["set weight 100"]
+    in_b_set:
+      "off": []
+      baseline: []
+      weight: ["set weight 200"]
+      local_pref: ["set local-preference 200"]
+      prepend: []
+      med: []
+      order: ["set local-preference 200"]
+    out_a_set:
+      "off": []
+      baseline: []
+      weight: []
+      local_pref: []
+      prepend: ["set as-path prepend 65002 65002 65002"]
+      med: ["set metric 200"]
+      order: []
+    out_b_set:
+      "off": []
+      baseline: []
+      weight: []
+      local_pref: []
+      prepend: []
+      med: ["set metric 50"]
+      order: []
+  tasks:
+    - name: Check the lab name
+      ansible.builtin.assert:
+        that: path_lab in allowed_labs
+        fail_msg: "path_lab must be one of: {{ allowed_labs | join(', ') }}"
+        quiet: true
+
+    # ---- prepare (always safe to repeat) ----
+    - name: Gi0/3 link B
+      cisco.ios.ios_config:
+        parents: "interface GigabitEthernet0/3"
+        lines:
+          - "description Link B to {{ 'R9' if inventory_hostname == 'er8' else 'R8' }}"
+          - "ip address {{ link_ip }} 255.255.255.252"
+          - "no shutdown"
+        save_when: modified
+
+    # ---- reset: R8 ----
+    - name: R8 remove inbound policy on link A
+      cisco.ios.ios_config:
+        parents: ["router bgp 65001", "address-family ipv4"]
+        lines: ["no neighbor 10.10.10.2 route-map IN-A in"]
+      when: inventory_hostname == 'er8'
+      ignore_errors: true
+
+    - name: R8 remove inbound policy on link B
+      cisco.ios.ios_config:
+        parents: ["router bgp 65001", "address-family ipv4"]
+        lines: ["no neighbor 10.10.14.2 route-map IN-B in"]
+      when: inventory_hostname == 'er8'
+      ignore_errors: true
+
+    - name: R8 remove route-map IN-A
+      cisco.ios.ios_config:
+        lines: ["no route-map IN-A"]
+      when: inventory_hostname == 'er8'
+      ignore_errors: true
+
+    - name: R8 remove route-map IN-B
+      cisco.ios.ios_config:
+        lines: ["no route-map IN-B"]
+      when: inventory_hostname == 'er8'
+      ignore_errors: true
+
+    # ---- reset: R9 ----
+    - name: R9 remove outbound policy on link A
+      cisco.ios.ios_config:
+        parents: ["router bgp 65002", "address-family ipv4"]
+        lines: ["no neighbor 10.10.10.1 route-map OUT-A out"]
+      when: inventory_hostname == 'er9'
+      ignore_errors: true
+
+    - name: R9 remove outbound policy on link B
+      cisco.ios.ios_config:
+        parents: ["router bgp 65002", "address-family ipv4"]
+        lines: ["no neighbor 10.10.14.1 route-map OUT-B out"]
+      when: inventory_hostname == 'er9'
+      ignore_errors: true
+
+    - name: R9 remove route-map OUT-A
+      cisco.ios.ios_config:
+        lines: ["no route-map OUT-A"]
+      when: inventory_hostname == 'er9'
+      ignore_errors: true
+
+    - name: R9 remove route-map OUT-B
+      cisco.ios.ios_config:
+        lines: ["no route-map OUT-B"]
+      when: inventory_hostname == 'er9'
+      ignore_errors: true
+
+    # ---- off: remove the link B session (only when asked, so other labs do not flap it) ----
+    - name: R8 remove the link B neighbor
+      cisco.ios.ios_config:
+        parents: "router bgp 65001"
+        lines: ["no neighbor 10.10.14.2"]
+      when: inventory_hostname == 'er8' and path_lab == 'off'
+      ignore_errors: true
+
+    - name: R8 remove compare-routerid
+      cisco.ios.ios_config:
+        parents: "router bgp 65001"
+        lines: ["no bgp bestpath compare-routerid"]
+      when: inventory_hostname == 'er8' and path_lab == 'off'
+      ignore_errors: true
+
+    - name: R9 remove the link B neighbor
+      cisco.ios.ios_config:
+        parents: "router bgp 65002"
+        lines: ["no neighbor 10.10.14.1"]
+      when: inventory_hostname == 'er9' and path_lab == 'off'
+      ignore_errors: true
+
+    # ---- apply: second session ----
+    - name: R8 link B neighbor and deterministic tie-break
+      cisco.ios.ios_config:
+        parents: "router bgp 65001"
+        lines:
+          - "bgp bestpath compare-routerid"
+          - "neighbor 10.10.14.2 remote-as 65002"
+          - "neighbor 10.10.14.2 description eBGP to R9 link B"
+        save_when: modified
+      when: inventory_hostname == 'er8' and path_lab != 'off'
+
+    - name: R8 activate link B
+      cisco.ios.ios_config:
+        parents: ["router bgp 65001", "address-family ipv4"]
+        lines: ["neighbor 10.10.14.2 activate"]
+        save_when: modified
+      when: inventory_hostname == 'er8' and path_lab != 'off'
+
+    - name: R9 link B neighbor
+      cisco.ios.ios_config:
+        parents: "router bgp 65002"
+        lines:
+          - "neighbor 10.10.14.1 remote-as 65001"
+          - "neighbor 10.10.14.1 description eBGP to R8 link B"
+        save_when: modified
+      when: inventory_hostname == 'er9' and path_lab != 'off'
+
+    - name: R9 activate link B
+      cisco.ios.ios_config:
+        parents: ["router bgp 65002", "address-family ipv4"]
+        lines: ["neighbor 10.10.14.1 activate"]
+        save_when: modified
+      when: inventory_hostname == 'er9' and path_lab != 'off'
+
+    # ---- apply: policy on R8 (inbound) ----
+    - name: R8 IN-A with set lines
+      cisco.ios.ios_config:
+        parents: "route-map IN-A permit 10"
+        lines: "{{ in_a_set[path_lab] }}"
+      when: inventory_hostname == 'er8' and (in_a_set[path_lab] | length) > 0
+
+    - name: R8 IN-A empty (permit all)
+      cisco.ios.ios_config:
+        lines: ["route-map IN-A permit 10"]
+      when: inventory_hostname == 'er8' and path_lab in ['weight', 'local_pref', 'order'] and (in_a_set[path_lab] | length) == 0
+
+    - name: R8 IN-B with set lines
+      cisco.ios.ios_config:
+        parents: "route-map IN-B permit 10"
+        lines: "{{ in_b_set[path_lab] }}"
+      when: inventory_hostname == 'er8' and (in_b_set[path_lab] | length) > 0
+
+    - name: R8 attach inbound policies
+      cisco.ios.ios_config:
+        parents: ["router bgp 65001", "address-family ipv4"]
+        lines:
+          - "neighbor 10.10.10.2 route-map IN-A in"
+          - "neighbor 10.10.14.2 route-map IN-B in"
+        save_when: modified
+      when: inventory_hostname == 'er8' and path_lab in ['weight', 'local_pref', 'order']
+
+    # ---- apply: policy on R9 (outbound) ----
+    - name: R9 OUT-A with set lines
+      cisco.ios.ios_config:
+        parents: "route-map OUT-A permit 10"
+        lines: "{{ out_a_set[path_lab] }}"
+      when: inventory_hostname == 'er9' and (out_a_set[path_lab] | length) > 0
+
+    - name: R9 OUT-B with set lines
+      cisco.ios.ios_config:
+        parents: "route-map OUT-B permit 10"
+        lines: "{{ out_b_set[path_lab] }}"
+      when: inventory_hostname == 'er9' and (out_b_set[path_lab] | length) > 0
+
+    - name: R9 OUT-B empty (permit all)
+      cisco.ios.ios_config:
+        lines: ["route-map OUT-B permit 10"]
+      when: inventory_hostname == 'er9' and path_lab == 'prepend'
+
+    - name: R9 attach outbound policies
+      cisco.ios.ios_config:
+        parents: ["router bgp 65002", "address-family ipv4"]
+        lines:
+          - "neighbor 10.10.10.1 route-map OUT-A out"
+          - "neighbor 10.10.14.1 route-map OUT-B out"
+        save_when: modified
+      when: inventory_hostname == 'er9' and path_lab in ['prepend', 'med']
+
+    # ---- make the policy take effect ----
+    - name: R8 soft reset inbound
+      cisco.ios.ios_command:
+        commands: ["clear ip bgp * soft in"]
+      when: inventory_hostname == 'er8'
+
+    - name: R9 soft reset outbound
+      cisco.ios.ios_command:
+        commands: ["clear ip bgp * soft out"]
+      when: inventory_hostname == 'er9'
+
+    - name: Save the configuration (covers path_lab=off)
+      cisco.ios.ios_config:
+        save_when: always

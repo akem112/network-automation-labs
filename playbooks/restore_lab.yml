@@ -1,0 +1,130 @@
+---
+# restore_lab.yml
+# Reverses every fault that break_lab.yml can inject, then re-applies your
+# known-good configure playbooks. Safe to run whether or not a given fault is
+# currently active: reverts use ignore_errors, so a fault that was never
+# injected does not stop the run. Some revert tasks will report "changed"
+# every time; that is expected for "no ..." commands.
+#
+# Usage (from ~/ansible-lab):
+#   ansible-playbook -i inventory_enarsi.ini restore_lab.yml
+#
+# Tip: run this BEFORE break_lab.yml so faults from an earlier run never stack.
+
+# ---------------- EIGRP faults ----------------
+- name: Revert EIGRP faults
+  hosts: eigrp_lab
+  gather_facts: no
+  tasks:
+    - name: Revert wrong AS on R2 (remove AS 101; configure_eigrp.yml restores AS 100)
+      cisco.ios.ios_config:
+        lines:
+          - "no address-family ipv4 unicast autonomous-system 101"
+        parents: "router eigrp EIGRP-LAB"
+      when: inventory_hostname == 'er2'
+      ignore_errors: true
+
+    - name: Revert passive-interface on R1 Gi0/1
+      cisco.ios.ios_config:
+        lines:
+          - "no passive-interface"
+        parents:
+          - "router eigrp EIGRP-LAB"
+          - "address-family ipv4 unicast autonomous-system 100"
+          - "af-interface GigabitEthernet0/1"
+      when: inventory_hostname == 'er1'
+      ignore_errors: true
+
+    - name: Restore network statement on R3 (R3-R4 link)
+      cisco.ios.ios_config:
+        lines:
+          - "network 10.10.4.0 0.0.0.3"
+        parents:
+          - "router eigrp EIGRP-LAB"
+          - "address-family ipv4 unicast autonomous-system 100"
+      when: inventory_hostname == 'er3'
+      ignore_errors: true
+
+# ---------------- OSPF faults ----------------
+- name: Revert OSPF faults
+  hosts: ospf_lab
+  gather_facts: no
+  tasks:
+    - name: Restore R7 area (area 2 back to area 1) and stub
+      cisco.ios.ios_config:
+        lines:
+          - "no network 10.10.8.0 0.0.0.3 area 2"
+          - "network 10.10.8.0 0.0.0.3 area 1"
+          - "area 1 stub"
+        parents: "router ospf 1"
+      when: inventory_hostname == 'er7'
+      ignore_errors: true
+
+    - name: Remove hello-interval override on R5 Gi0/2
+      cisco.ios.ios_config:
+        lines:
+          - "no ip ospf hello-interval"
+        parents: "interface GigabitEthernet0/2"
+      when: inventory_hostname == 'er5'
+      ignore_errors: true
+
+    - name: Restore R5 Loopback0 mask to /32
+      cisco.ios.ios_config:
+        lines:
+          - "ip address 10.255.0.5 255.255.255.255"
+        parents: "interface Loopback0"
+      when: inventory_hostname == 'er5'
+      ignore_errors: true
+
+    - name: Restore correct wildcard mask on R4 for the R5 link
+      cisco.ios.ios_config:
+        lines:
+          - "no network 10.10.5.0 0.0.0.0 area 0"
+          - "network 10.10.5.0 0.0.0.3 area 0"
+        parents: "router ospf 1"
+      when: inventory_hostname == 'er4'
+      ignore_errors: true
+
+    - name: Bring R6 Gi0/1 back up
+      cisco.ios.ios_config:
+        lines:
+          - "no shutdown"
+        parents: "interface GigabitEthernet0/1"
+      when: inventory_hostname == 'er6'
+      ignore_errors: true
+
+# ---------------- Redistribution faults ----------------
+- name: Restore redistribution on R4
+  hosts: er4
+  gather_facts: no
+  tasks:
+    - name: Remove either broken redistribute variant, then re-add the correct one
+      cisco.ios.ios_config:
+        lines:
+          - "no redistribute eigrp 100 metric 20 metric-type 1 route-map EIGRP-TO-OSPF"
+          - "no redistribute eigrp 100 subnets metric 20 metric-type 1"
+          - "redistribute eigrp 100 subnets metric 20 metric-type 1 route-map EIGRP-TO-OSPF"
+        parents: "router ospf 1"
+      ignore_errors: true
+
+- name: Restore redistribution tag on R6
+  hosts: er6
+  gather_facts: no
+  tasks:
+    - name: Restore route-map tag 200
+      cisco.ios.ios_config:
+        lines:
+          - "no set tag 999"
+          - "set tag 200"
+        parents: "route-map OSPF-TO-EIGRP permit 10"
+      ignore_errors: true
+
+# ---------------- Re-apply known-good configuration ----------------
+- import_playbook: configure_interfaces.yml
+- import_playbook: configure_eigrp.yml
+- import_playbook: configure_ospf.yml
+- import_playbook: configure_redistribution.yml
+
+- import_playbook: configure_ospf_area_labs.yml
+- import_playbook: configure_pbr_ipsla.yml
+- import_playbook: configure_ibgp_rr.yml

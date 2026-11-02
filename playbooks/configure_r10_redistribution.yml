@@ -1,0 +1,69 @@
+---
+# configure_r10_redistribution.yml
+# Build step 5: redistribution boundary #3 on R10 (EIGRP 200 <-> BGP 65003).
+#
+#   EIGRP 200 -> BGP : only the two spoke LANs (prefix-list filter)
+#                      10.111.1.0/24 (R11) and 10.112.1.0/24 (R12)
+#   BGP -> EIGRP 200 : everything EXCEPT the spoke LANs, tagged 500
+#                      (the deny stops R10 re-injecting its own prefixes if they
+#                       ever come back through BGP)
+#
+# The hub still sends the spokes only a default route (summary-address on
+# Tunnel0), so spokes do not receive these redistributed routes.
+# Return traffic from the main lab works because spokes use that default.
+# Every task saves the config so an EVE-NG restart cannot undo it.
+#
+# Usage (from ~/ansible-lab):
+#   ansible-playbook -i inventory_enarsi.ini configure_r10_redistribution.yml --check --diff
+#   ansible-playbook -i inventory_enarsi.ini configure_r10_redistribution.yml
+
+- name: R10 - redistribution between EIGRP 200 and BGP 65003
+  hosts: er10
+  gather_facts: no
+  tasks:
+    - name: Prefix-list for the spoke LANs
+      cisco.ios.ios_config:
+        lines:
+          - "ip prefix-list SPOKE-LANS seq 5 permit 10.111.1.0/24"
+          - "ip prefix-list SPOKE-LANS seq 10 permit 10.112.1.0/24"
+        save_when: modified
+
+    - name: Route-map EIGRP200-TO-BGP (only the spoke LANs)
+      cisco.ios.ios_config:
+        parents: "route-map EIGRP200-TO-BGP permit 10"
+        lines:
+          - "match ip address prefix-list SPOKE-LANS"
+        save_when: modified
+
+    - name: Route-map BGP-TO-EIGRP200 seq 5 (never send spoke LANs back)
+      cisco.ios.ios_config:
+        parents: "route-map BGP-TO-EIGRP200 deny 5"
+        lines:
+          - "match ip address prefix-list SPOKE-LANS"
+        save_when: modified
+
+    - name: Route-map BGP-TO-EIGRP200 seq 10 (tag everything else 500)
+      cisco.ios.ios_config:
+        parents: "route-map BGP-TO-EIGRP200 permit 10"
+        lines:
+          - "set tag 500"
+        save_when: modified
+
+    - name: Redistribute EIGRP 200 into BGP
+      cisco.ios.ios_config:
+        parents:
+          - "router bgp 65003"
+          - "address-family ipv4"
+        lines:
+          - "redistribute eigrp 200 route-map EIGRP200-TO-BGP"
+        save_when: modified
+
+    - name: Redistribute BGP into EIGRP 200
+      cisco.ios.ios_config:
+        parents:
+          - "router eigrp DMVPN"
+          - "address-family ipv4 unicast autonomous-system 200"
+          - "topology base"
+        lines:
+          - "redistribute bgp 65003 metric 10000 100 255 1 1500 route-map BGP-TO-EIGRP200"
+        save_when: modified

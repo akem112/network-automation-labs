@@ -1,0 +1,202 @@
+---
+# configure_dmvpn.yml
+# Build step 4: DMVPN Phase 3 (hub R10, spokes R11 and R12), EIGRP AS 200 overlay.
+#
+#   underlay                              overlay (Tunnel0, 172.16.100.0/24)
+#   R10 Gi0/2 10.10.12.1 -- 10.10.12.2 R11 Gi0/1      R10 .1   R11 .11   R12 .12
+#   R10 Gi0/3 10.10.13.1 -- 10.10.13.2 R12 Gi0/1
+#
+#   Tunnel source on every router = Loopback0 (10.255.0.10 / .11 / .12).
+#   Underlay reachability between loopbacks = /32 static routes (no default
+#   route in the underlay, so the hub's overlay default is the only default).
+#   Spoke "LANs": Loopback100  R11 10.111.1.0/24   R12 10.112.1.0/24
+#   Phase 3: hub sends a default summary + "ip nhrp redirect";
+#            spokes use "ip nhrp shortcut" to build spoke-to-spoke tunnels.
+#   No IPsec yet (plain mGRE) so the NHRP/EIGRP behaviour is easy to see.
+#
+# Needs er11 and er12 in [bgp_lab] in inventory_enarsi.ini (mgmt IP + SSH).
+# Every task saves the config so an EVE-NG restart cannot undo it.
+#
+# Usage (from ~/ansible-lab):
+#   ansible-playbook -i inventory_enarsi.ini configure_dmvpn.yml --check --diff
+#   ansible-playbook -i inventory_enarsi.ini configure_dmvpn.yml
+
+# ---------------- Hub: R10 ----------------
+- name: R10 - DMVPN hub
+  hosts: er10
+  gather_facts: no
+  tasks:
+    - name: Underlay links toward R11 and R12
+      cisco.ios.ios_config:
+        parents: "interface {{ item.name }}"
+        lines:
+          - "description {{ item.desc }}"
+          - "ip address {{ item.ip }} 255.255.255.252"
+          - "no shutdown"
+        save_when: modified
+      loop:
+        - { name: GigabitEthernet0/2, desc: "Link to R11", ip: 10.10.12.1 }
+        - { name: GigabitEthernet0/3, desc: "Link to R12", ip: 10.10.13.1 }
+
+    - name: Underlay static routes to the spoke loopbacks
+      cisco.ios.ios_config:
+        lines:
+          - "ip route 10.255.0.11 255.255.255.255 10.10.12.2"
+          - "ip route 10.255.0.12 255.255.255.255 10.10.13.2"
+        save_when: modified
+
+    - name: Tunnel0 (mGRE hub, Phase 3)
+      cisco.ios.ios_config:
+        parents: "interface Tunnel0"
+        lines:
+          - "ip address 172.16.100.1 255.255.255.0"
+          - "no ip redirects"
+          - "ip mtu 1400"
+          - "ip tcp adjust-mss 1360"
+          - "ip nhrp network-id 100"
+          - "ip nhrp authentication ENARSI01"
+          - "ip nhrp map multicast dynamic"
+          - "ip nhrp redirect"
+          - "tunnel source Loopback0"
+          - "tunnel mode gre multipoint"
+        save_when: modified
+
+    - name: EIGRP AS 200 (named mode) on the overlay
+      cisco.ios.ios_config:
+        parents:
+          - "router eigrp DMVPN"
+          - "address-family ipv4 unicast autonomous-system 200"
+        lines:
+          - "network 172.16.100.0 0.0.0.255"
+          - "eigrp router-id 10.255.0.10"
+        save_when: modified
+
+    - name: Hub sends only a default route to the spokes (Phase 3)
+      cisco.ios.ios_config:
+        parents:
+          - "router eigrp DMVPN"
+          - "address-family ipv4 unicast autonomous-system 200"
+          - "af-interface Tunnel0"
+        lines:
+          - "summary-address 0.0.0.0 0.0.0.0"
+        save_when: modified
+
+# ---------------- Spoke: R11 ----------------
+- name: R11 - DMVPN spoke
+  hosts: er11
+  gather_facts: no
+  tasks:
+    - name: Loopback0 and Loopback100 (LAN)
+      cisco.ios.ios_config:
+        parents: "interface {{ item.name }}"
+        lines:
+          - "ip address {{ item.ip }} {{ item.mask }}"
+        save_when: modified
+      loop:
+        - { name: Loopback0,   ip: 10.255.0.11, mask: 255.255.255.255 }
+        - { name: Loopback100, ip: 10.111.1.1,  mask: 255.255.255.0 }
+
+    - name: Gi0/1 toward the hub
+      cisco.ios.ios_config:
+        parents: "interface GigabitEthernet0/1"
+        lines:
+          - "description Link to R10"
+          - "ip address 10.10.12.2 255.255.255.252"
+          - "no shutdown"
+        save_when: modified
+
+    - name: Underlay static routes (hub loopback and the other spoke loopback)
+      cisco.ios.ios_config:
+        lines:
+          - "ip route 10.255.0.10 255.255.255.255 10.10.12.1"
+          - "ip route 10.255.0.12 255.255.255.255 10.10.12.1"
+        save_when: modified
+
+    - name: Tunnel0 (mGRE spoke, Phase 3)
+      cisco.ios.ios_config:
+        parents: "interface Tunnel0"
+        lines:
+          - "ip address 172.16.100.11 255.255.255.0"
+          - "no ip redirects"
+          - "ip mtu 1400"
+          - "ip tcp adjust-mss 1360"
+          - "ip nhrp network-id 100"
+          - "ip nhrp authentication ENARSI01"
+          - "ip nhrp map 172.16.100.1 10.255.0.10"
+          - "ip nhrp map multicast 10.255.0.10"
+          - "ip nhrp nhs 172.16.100.1"
+          - "ip nhrp shortcut"
+          - "tunnel source Loopback0"
+          - "tunnel mode gre multipoint"
+        save_when: modified
+
+    - name: EIGRP AS 200 on tunnel and LAN
+      cisco.ios.ios_config:
+        parents:
+          - "router eigrp DMVPN"
+          - "address-family ipv4 unicast autonomous-system 200"
+        lines:
+          - "network 172.16.100.0 0.0.0.255"
+          - "network 10.111.1.0 0.0.0.255"
+          - "eigrp router-id 10.255.0.11"
+        save_when: modified
+
+# ---------------- Spoke: R12 ----------------
+- name: R12 - DMVPN spoke
+  hosts: er12
+  gather_facts: no
+  tasks:
+    - name: Loopback0 and Loopback100 (LAN)
+      cisco.ios.ios_config:
+        parents: "interface {{ item.name }}"
+        lines:
+          - "ip address {{ item.ip }} {{ item.mask }}"
+        save_when: modified
+      loop:
+        - { name: Loopback0,   ip: 10.255.0.12, mask: 255.255.255.255 }
+        - { name: Loopback100, ip: 10.112.1.1,  mask: 255.255.255.0 }
+
+    - name: Gi0/1 toward the hub
+      cisco.ios.ios_config:
+        parents: "interface GigabitEthernet0/1"
+        lines:
+          - "description Link to R10"
+          - "ip address 10.10.13.2 255.255.255.252"
+          - "no shutdown"
+        save_when: modified
+
+    - name: Underlay static routes (hub loopback and the other spoke loopback)
+      cisco.ios.ios_config:
+        lines:
+          - "ip route 10.255.0.10 255.255.255.255 10.10.13.1"
+          - "ip route 10.255.0.11 255.255.255.255 10.10.13.1"
+        save_when: modified
+
+    - name: Tunnel0 (mGRE spoke, Phase 3)
+      cisco.ios.ios_config:
+        parents: "interface Tunnel0"
+        lines:
+          - "ip address 172.16.100.12 255.255.255.0"
+          - "no ip redirects"
+          - "ip mtu 1400"
+          - "ip tcp adjust-mss 1360"
+          - "ip nhrp network-id 100"
+          - "ip nhrp authentication ENARSI01"
+          - "ip nhrp map 172.16.100.1 10.255.0.10"
+          - "ip nhrp map multicast 10.255.0.10"
+          - "ip nhrp nhs 172.16.100.1"
+          - "ip nhrp shortcut"
+          - "tunnel source Loopback0"
+          - "tunnel mode gre multipoint"
+        save_when: modified
+
+    - name: EIGRP AS 200 on tunnel and LAN
+      cisco.ios.ios_config:
+        parents:
+          - "router eigrp DMVPN"
+          - "address-family ipv4 unicast autonomous-system 200"
+        lines:
+          - "network 172.16.100.0 0.0.0.255"
+          - "network 10.112.1.0 0.0.0.255"
+          - "eigrp router-id 10.255.0.12"
+        save_when: modified
